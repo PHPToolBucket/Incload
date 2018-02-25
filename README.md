@@ -6,13 +6,13 @@ Looks for files that cannot be autoloaded (e.g. functions) and compiles a list o
 ## Installation
 
 ```
-composer require php-tool-bucket/incload
+composer require php-tool-bucket/incload --dev
 ```
 
 Then `chdir` to the project root and run:
 
 ```
-php vendor/php-tool-bucket/invload/incload update
+php vendor/php-tool-bucket/incload/incload update
 ```
 
 Then edit `composer.json` and add:
