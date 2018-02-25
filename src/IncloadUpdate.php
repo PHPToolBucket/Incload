@@ -6,10 +6,13 @@ namespace Netmosfera\Incload;
 
 use Closure;
 use DateTime;
+use Error;
+use Exception;
 use const JSON_ERROR_NONE;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use function file_get_contents;
 use function file_put_contents;
@@ -28,76 +31,53 @@ class IncloadUpdate extends Command
 
     /** @inheritDoc */
     function configure(){
-        $this->setDefinition([
-            new InputArgument(
-                "composer", InputArgument::OPTIONAL,
-                "Specify composer.json path",
-                getcwd() . "/composer.json"
-            ),
-            new InputArgument(
-                "file", InputArgument::OPTIONAL,
-                "Specify the main include file name (exclusive of .php)",
-                "composer-includes"
-            ),
-            new InputArgument(
-                "devfile", InputArgument::OPTIONAL,
-                "Specify the main include-dev file name (exclusive of .php)",
-                "composer-includes-dev"
-            ),
-            new InputArgument(
-                "ext", InputArgument::OPTIONAL,
-                "Specify the file extensions, semicolon separated; e.g. inc.php;fn.php;class.php",
-                "inc.php;fn.php;function.php;class.php;const.php;constant.php;ns.php;namespace.php"
-            ),
-            new InputArgument(
-                "interval", InputArgument::OPTIONAL,
-                "Specify interval in seconds between check for changes",
-                "5"
-            ),
-            new InputArgument(
-                "errdelay", InputArgument::OPTIONAL,
-                "Specify interval in seconds between an error and the consecutive retry",
-                "30"
-            )
-
-        ]);
+        $this->addOption("composer", NULL, InputOption::VALUE_OPTIONAL,
+            "Specify `composer.json` path", getcwd() . "/composer.json");
+        $this->addOption("file",     NULL, InputOption::VALUE_OPTIONAL,
+            "Specify the main include file name (exclusive of `.php`)", "composer-includes");
+        $this->addOption("devfile",  NULL, InputOption::VALUE_OPTIONAL,
+            "Specify the main include-dev file name (exclusive of `.php`)", "composer-includes-dev");
+        $this->addOption("ext",      NULL, InputOption::VALUE_OPTIONAL,
+            "Specify the file extensions, semicolon separated", "inc.php;fn.php;function.php;class.php;const.php;constant.php;ns.php;namespace.php");
+        $this->addOption("interval", NULL, InputOption::VALUE_OPTIONAL,
+            "Specify interval in seconds between check for changes", "5");
+        $this->addOption("errdelay", NULL, InputOption::VALUE_OPTIONAL,
+            "Specify interval in seconds between an error and the consecutive retry", "30");
     }
 
     /** @inheritDoc */
     function execute(InputInterface $input, OutputInterface $output){
+        $interval = (Int)$input->getOption("interval");
+        $composerFile = $input->getOption("composer");
+
+        $output->writeln(
+            "Looking for changes every $interval seconds in the directories " .
+            "specified by the given `$composerFile` file."
+        );
+
+        $output->writeln(
+            "The process is running and every modification to the involved files will be displayed here."
+        );
+
+        $output->writeln(
+            "Remember that you can terminate this process by hitting Ctrl + C."
+        );
+
         while(TRUE){
             sleep($this->executeSingle($input, $output));
         }
     }
 
     function executeSingle(InputInterface $input, OutputInterface $output): Int{
-        $composerFile = $input->getArgument("composer");
-
-        $composerSource = file_get_contents($composerFile);
-
-        if($composerSource === FALSE){
-            $output->writeln("Unable to read `$composerFile`; please check that the provided path is correct.");
-        }
-
-        $composerData = json_decode($composerSource, JSON_OBJECT_AS_ARRAY);
-
-        if(json_last_error() !== JSON_ERROR_NONE){
-            $output->writeln($this->time() . " > ");
-            return (Int)$input->getArgument("errdelay");
-        }
-
+        $interval = (Int)$input->getOption("interval");
+        $errorDelay = (Int)$input->getOption("errdelay");
+        $includeFileName = $input->getOption("file");
+        $includeDevFileName = $input->getOption("devfile");
+        $composerFile = $input->getOption("composer");
         $composerDirectory = dirname($composerFile);
-
-        $includeFile = $composerDirectory . "/" . $input->getArgument("file") . ".php";
-
-        $includeDevFile = $composerDirectory . "/" . $input->getArgument("devfile") . ".php";
-
-        $autoloadDirectories = [
-            $includeFile => $this->getComposerPSR4Dirs($composerData["autoload"]["psr-4"] ?? []),
-            $includeDevFile => $this->getComposerPSR4Dirs($composerData["autoload-dev"]["psr-4"] ?? []),
-        ];
-
-        $rawExtensions = explode(";", $input->getArgument("ext"));
+        $includeFile = $composerDirectory . "/" . $includeFileName . ".php";
+        $includeDevFile = $composerDirectory . "/" . $includeDevFileName . ".php";
+        $rawExtensions = explode(";", $input->getOption("ext"));
         $extensions = [];
         foreach($rawExtensions as $extension){
             $extension = trim($extension);
@@ -105,6 +85,26 @@ class IncloadUpdate extends Command
                 $extensions[] = "." . $extension;
             }
         }
+
+
+        $composerSource = @file_get_contents($composerFile);
+
+        if($composerSource === FALSE){
+            $output->writeln($this->time() . "Cannot read `$composerFile`. Will retry in $errorDelay seconds.");
+            return $errorDelay;
+        }
+
+        $composerData = json_decode($composerSource, JSON_OBJECT_AS_ARRAY);
+
+        if(json_last_error() !== JSON_ERROR_NONE){
+            $output->writeln($this->time() . "Cannot read `composer.json` as it contains invalid JSON. Will retry in $errorDelay seconds.");
+            return $errorDelay;
+        }
+
+        $autoloadDirectories = [
+            $includeFile => $this->getComposerPSR4Dirs($composerData["autoload"]["psr-4"] ?? []),
+            $includeDevFile => $this->getComposerPSR4Dirs($composerData["autoload-dev"]["psr-4"] ?? []),
+        ];
 
         $includeFileFunction = function($path) use($extensions){
             foreach($extensions as $extension){
@@ -117,8 +117,14 @@ class IncloadUpdate extends Command
 
         foreach($autoloadDirectories as $mainInclude => $directories){
             $includes = [];
-            foreach($directories as $directory){
-                $includes = array_merge($includes, $this->getDirectoryInclusions($composerDirectory, $directory, $includeFileFunction));
+            try{
+                foreach($directories as $directory){
+                    $directoryInclusions = $this->getDirectoryInclusions($composerDirectory, $directory, $includeFileFunction);
+                    $includes = array_merge($includes, $directoryInclusions);
+                }
+            }catch(Exception $e){
+                $output->writeln($this->time() . "Cannot read the source directories. Will retry in $errorDelay seconds.");
+                return $errorDelay;
             }
 
             $fileSource = "<?php\n\n";
@@ -129,10 +135,15 @@ class IncloadUpdate extends Command
                 $fileSource .= "require(__DIR__ . \"" . $include . "\");\n";
             }
 
-            file_put_contents($mainInclude, $fileSource);
+            $oldFileSource = @file_get_contents($mainInclude);
+            $oldFileSource = $oldFileSource === FALSE ? "" : $oldFileSource;
+            if($oldFileSource !== $fileSource){
+                $output->writeln($this->time() . "Includes list was updated.");
+                file_put_contents($mainInclude, $fileSource);
+            }
         }
 
-        return (Int)$input->getArgument("interval");
+        return $interval;
     }
 
     private function getComposerPSR4Dirs(array $data){
@@ -150,7 +161,7 @@ class IncloadUpdate extends Command
         $inclusions = $this->filterDirectoryFiles($cwd, $directory, $includeFileFunction);
 
         $directoryDirectories = $this->filterDirectoryFiles($cwd, $directory, function($filePath){
-            return is_dir($filePath);
+            return @is_dir($filePath);
         });
 
         foreach($directoryDirectories as $directoryDirectory){
@@ -165,8 +176,11 @@ class IncloadUpdate extends Command
         $backupCWD = getcwd();
         chdir($cwd);
         $files = [];
-        $directoryHandle = opendir($directory);
-        while(is_string($file = readdir($directoryHandle))){
+        $directoryHandle = @opendir($directory);
+        if($directoryHandle === FALSE){
+            throw new Exception();
+        }
+        while(is_string($file = @readdir($directoryHandle))){
             $filePath = $cwd . "/" . $directory . "/" . $file;
             if(in_array($file, [".", ".."]) === FALSE && $ifMatches($filePath)){
                 $files[] = $directory . "/" . $file;
@@ -178,6 +192,6 @@ class IncloadUpdate extends Command
     }
 
     private function time(): String{
-        return (new DateTime())->format("Y-m-d H:i:s");
+        return (new DateTime())->format("Y-m-d H:i:s") . " > ";
     }
 }
