@@ -1,0 +1,21 @@
+{
+    "name": "php-tool-bucket/incload",
+    "homepage": "https://github.com/PHPToolBucket/Incload",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Wes",
+            "homepage": "https://github.com/Netmosfera",
+            "role": "Smith"
+        }
+    ],
+    "require": {
+        "php": ">=7 <8",
+        "symfony/console": ">=4 <5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Netmosfera\\Incload\\": "src/"
+        }
+    }
+}
