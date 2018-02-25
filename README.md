@@ -30,7 +30,13 @@ Then edit `composer.json` and add:
 }
 ```
 
-Then proceed creating `.inc.php` files within the project's folders. These files will be
+Then run the following, so that the two files are added to `vendor/autoload.php`:
+ 
+```
+composer update
+```
+ 
+Finally, proceed creating `.inc.php` files within the project's folders. These files will be
 added automatically to said `composer-includes.php` and `composer-includes-dev.php`
 files as soon as the program notices them.
 
