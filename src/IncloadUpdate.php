@@ -51,6 +51,10 @@ class IncloadUpdate extends Command
         $composerFile = $input->getOption("composer");
 
         $output->writeln(
+            "CWD is: " . getcwd()
+        );
+        
+        $output->writeln(
             "Looking for changes every $interval seconds in the directories " .
             "specified by the given `$composerFile` file."
         );
